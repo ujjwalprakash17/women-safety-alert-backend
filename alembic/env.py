@@ -15,6 +15,7 @@ from app.db.base import Base
 import app.models.user  # noqa: F401,E402
 import app.models.sos_session  # noqa: F401,E402
 import app.models.push_subscription  # noqa: F401,E402
+import app.models.trusted_contact  # noqa: F401,E402
 
 config = context.config
 # Deliberately NOT using config.set_main_option()/get_section() for the URL:
