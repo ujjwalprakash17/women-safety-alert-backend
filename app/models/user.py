@@ -22,6 +22,12 @@ class User(Base):
     # is always present — enforced in code (get_current_user), not the DB.
     phone_number: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     email: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    # Null until onboarding is completed — the frontend gates every
+    # authenticated page on both of these being set (see useAuthedUser).
+    display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    consent_accepted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
