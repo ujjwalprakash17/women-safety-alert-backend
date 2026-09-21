@@ -1,6 +1,7 @@
 import asyncio
 from logging.config import fileConfig
 
+from geoalchemy2.types import Geography, Geometry
 from sqlalchemy import pool
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -12,6 +13,7 @@ from app.db.base import Base
 # Import every model module here so Base.metadata sees all tables before
 # autogenerate (or the initial hand-written migration) reads it.
 import app.models.user  # noqa: F401,E402
+import app.models.sos_session  # noqa: F401,E402
 
 config = context.config
 # Deliberately NOT using config.set_main_option()/get_section() for the URL:
@@ -42,6 +44,17 @@ def include_object(object, name, type_, reflected, compare_to):
     return True
 
 
+# GeoAlchemy2's reflected Geography/Geometry types routinely don't compare
+# equal to the declared model type even when the column is identical, which
+# makes autogenerate propose a bogus "alter column type" on every run once
+# there's more than one geometry-holding table. Always hand-write migrations
+# that touch a geometry column; never trust autogenerate's diff for them.
+def compare_type(context, inspected_column, metadata_column, inspected_type, metadata_type):
+    if isinstance(metadata_type, (Geography, Geometry)):
+        return False
+    return None
+
+
 def run_migrations_offline() -> None:
     context.configure(
         url=settings.DATABASE_URL,
@@ -49,6 +62,7 @@ def run_migrations_offline() -> None:
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         include_object=include_object,
+        compare_type=compare_type,
     )
 
     with context.begin_transaction():
@@ -60,6 +74,7 @@ def do_run_migrations(connection) -> None:
         connection=connection,
         target_metadata=target_metadata,
         include_object=include_object,
+        compare_type=compare_type,
     )
 
     with context.begin_transaction():
