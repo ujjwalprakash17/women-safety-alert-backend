@@ -185,3 +185,20 @@ async def nearby_sos_sessions(
         NearbySosSession(**_to_read(session, lat_, lng_).model_dump(), distance_meters=dist)
         for session, lat_, lng_, dist in rows
     ]
+
+
+# Declared after /nearby on purpose — a literal path must be matched before a
+# same-method path-param route, or a request to /sos/nearby would instead be
+# captured here as session_id="nearby" and fail UUID validation with a 422.
+@router.get("/{session_id}", response_model=SosSessionRead)
+async def get_sos(
+    session_id: uuid.UUID,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SosSessionRead:
+    # Any authenticated user may fetch any session (same openness as
+    # /sos/nearby and the WS route — no responder/KYC tier exists yet).
+    row = await _get_session_row(db, session_id)
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "SOS session not found")
+    return _to_read(*row)
