@@ -65,6 +65,15 @@ def _to_read(session: SosSession, lat: float, lng: float) -> SosSessionRead:
     )
 
 
+async def _get_active_session_for_user(
+    db: AsyncSession, user_id: uuid.UUID
+) -> SosSession | None:
+    result = await db.execute(
+        select(SosSession).where(SosSession.user_id == user_id, SosSession.status == "active")
+    )
+    return result.scalar_one_or_none()
+
+
 async def _get_owned_active_session(
     db: AsyncSession, session_id: uuid.UUID, current_user: User
 ) -> SosSession:
@@ -86,6 +95,16 @@ async def trigger_sos(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SosSessionRead:
+    # Guard against duplicate concurrent sessions (double-click, multiple
+    # tabs, a network retry) — nothing else stopped a user from ending up
+    # with two "active" sessions, which would show as duplicate entries on
+    # /nearby and leave it ambiguous which one to resolve. Idempotent: just
+    # hand back the existing active session instead of creating another.
+    existing = await _get_active_session_for_user(db, current_user.id)
+    if existing is not None:
+        row = await _get_session_row(db, existing.id)
+        return _to_read(*row)
+
     session = SosSession(
         user_id=current_user.id, status="active", location=_point(body.lat, body.lng)
     )
@@ -187,9 +206,25 @@ async def nearby_sos_sessions(
     ]
 
 
-# Declared after /nearby on purpose — a literal path must be matched before a
-# same-method path-param route, or a request to /sos/nearby would instead be
-# captured here as session_id="nearby" and fail UUID validation with a 422.
+@router.get("/active", response_model=SosSessionRead | None)
+async def get_active_sos(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SosSessionRead | None:
+    """The current user's own active session, if any — lets the dashboard
+    restore state on page load instead of only knowing about a session it
+    just created client-side (e.g. after a tab close/reopen)."""
+    existing = await _get_active_session_for_user(db, current_user.id)
+    if existing is None:
+        return None
+    row = await _get_session_row(db, existing.id)
+    return _to_read(*row)
+
+
+# Declared after /nearby and /active on purpose — a literal path must be
+# matched before a same-method path-param route, or a request to those
+# would instead be captured here as session_id="nearby"/"active" and fail
+# UUID validation with a 422.
 @router.get("/{session_id}", response_model=SosSessionRead)
 async def get_sos(
     session_id: uuid.UUID,
