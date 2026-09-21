@@ -19,5 +19,13 @@ class Settings(BaseSettings):
 
     FRONTEND_ORIGIN: str = "http://localhost:3000"
 
+    # Web Push (VAPID). No fake placeholder for the private key on purpose —
+    # code checks `if settings.VAPID_PRIVATE_KEY:` before ever calling
+    # webpush(), so "not configured" is an explicit, obvious no-op rather
+    # than a confusing failed call.
+    VAPID_PRIVATE_KEY: str | None = None  # path to private_key.pem
+    VAPID_PUBLIC_KEY: str = ""  # base64url application-server key
+    VAPID_CONTACT_EMAIL: str = "mailto:admin@example.com"
+
 
 settings = Settings()

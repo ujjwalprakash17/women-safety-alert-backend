@@ -1,13 +1,13 @@
 import uuid
 
 import jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, WebSocket, WebSocketException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.db.session import get_db
+from app.db.session import async_session_maker, get_db
 from app.models.user import User
 
 _bearer_scheme = HTTPBearer()
@@ -50,11 +50,8 @@ def _decode_supabase_jwt(token: str) -> dict:
         ) from exc
 
 
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    payload = _decode_supabase_jwt(credentials.credentials)
+async def _authenticate_supabase_token(token: str, db: AsyncSession) -> User:
+    payload = _decode_supabase_jwt(token)
 
     supabase_user_id = uuid.UUID(payload["sub"])
     # Which claim is populated depends on the sign-in provider: phone for
@@ -82,3 +79,34 @@ async def get_current_user(
         await db.refresh(user)
 
     return user
+
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(_bearer_scheme),
+    db: AsyncSession = Depends(get_db),
+) -> User:
+    return await _authenticate_supabase_token(credentials.credentials, db)
+
+
+async def get_current_user_ws(
+    websocket: WebSocket, token: str | None = Query(default=None)
+) -> User:
+    """WebSocket counterpart of get_current_user.
+
+    Browsers can't set custom headers on a WebSocket handshake, so the token
+    travels as a query param instead — this can land in access logs; a
+    short-lived one-time ticket would avoid that, but isn't needed yet.
+
+    Deliberately does NOT use the `get_db` dependency: that dependency's
+    AsyncExitStack lifetime lasts until the endpoint coroutine returns, which
+    for a WebSocket is the whole connection duration — that would hold a
+    pooled DB connection checked out for as long as someone is watching an
+    SOS session. A short-lived session is used instead, closed immediately.
+    """
+    if not token:
+        raise WebSocketException(code=4401, reason="Missing token")
+    async with async_session_maker() as db:
+        try:
+            return await _authenticate_supabase_token(token, db)
+        except HTTPException as exc:
+            raise WebSocketException(code=4401, reason=str(exc.detail)) from exc

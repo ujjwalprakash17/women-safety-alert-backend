@@ -1,13 +1,18 @@
+import json
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from geoalchemy2 import Geometry
 from sqlalchemy import cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
+from app.core.push import send_push
 from app.core.security import get_current_user
+from app.core.ws_manager import sos_ws_manager
 from app.db.session import get_db
+from app.models.push_subscription import PushSubscription
 from app.models.sos_session import SOS_LOCATION_TYPE, SosSession
 from app.models.user import User
 from app.schemas.sos_session import (
@@ -77,6 +82,7 @@ async def _get_owned_active_session(
 @router.post("", response_model=SosSessionRead, status_code=status.HTTP_201_CREATED)
 async def trigger_sos(
     body: SosTriggerRequest,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SosSessionRead:
@@ -86,7 +92,26 @@ async def trigger_sos(
     db.add(session)
     await db.commit()
     row = await _get_session_row(db, session.id)
-    return _to_read(*row)
+    result = _to_read(*row)
+
+    # Broadcast-to-all, trigger-only push (no radius targeting yet — there's
+    # no mechanism tracking a responder's current location outside their own
+    # SOS sessions). One BackgroundTask per subscriber: pywebpush.webpush()
+    # is a blocking call, and Starlette offloads each task to the thread
+    # pool independently, so one slow/dead subscription can't stall others.
+    if settings.VAPID_PRIVATE_KEY:
+        subs = (await db.execute(select(PushSubscription))).scalars().all()
+        payload = json.dumps(
+            {
+                "title": "SOS Alert",
+                "body": "Someone nearby triggered an SOS.",
+                "session_id": str(session.id),
+            }
+        )
+        for sub in subs:
+            background_tasks.add_task(send_push, sub, payload)
+
+    return result
 
 
 @router.post("/{session_id}/location", response_model=SosSessionRead)
@@ -100,7 +125,12 @@ async def update_sos_location(
     session.location = _point(body.lat, body.lng)
     await db.commit()
     row = await _get_session_row(db, session_id)
-    return _to_read(*row)
+    result = _to_read(*row)
+    await sos_ws_manager.broadcast(
+        session_id,
+        {"type": "location", "lat": result.lat, "lng": result.lng, "updated_at": result.updated_at.isoformat()},
+    )
+    return result
 
 
 @router.post("/{session_id}/resolve", response_model=SosSessionRead)
@@ -116,7 +146,17 @@ async def resolve_sos(
     session.resolved_at = datetime.now(UTC)
     await db.commit()
     row = await _get_session_row(db, session_id)
-    return _to_read(*row)
+    result = _to_read(*row)
+    await sos_ws_manager.broadcast(
+        session_id,
+        {
+            "type": "resolved",
+            "outcome": result.outcome,
+            "resolved_at": result.resolved_at.isoformat() if result.resolved_at else None,
+        },
+    )
+    await sos_ws_manager.close_all(session_id)
+    return result
 
 
 @router.get("/nearby", response_model=list[NearbySosSession])

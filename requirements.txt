@@ -6,3 +6,4 @@ geoalchemy2
 alembic
 pydantic-settings
 pyjwt[crypto]
+pywebpush

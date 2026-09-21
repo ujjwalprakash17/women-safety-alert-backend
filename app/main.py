@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
-from app.routers import health, me, sos
+from app.routers import health, me, push, sos, sos_ws
 
 app = FastAPI(title="Women Safety SOS App API")
 
@@ -17,3 +17,5 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(me.router)
 app.include_router(sos.router)
+app.include_router(sos_ws.router)
+app.include_router(push.router)
