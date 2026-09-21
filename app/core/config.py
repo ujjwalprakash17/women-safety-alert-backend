@@ -17,7 +17,13 @@ class Settings(BaseSettings):
     # (Project Settings > API > JWT Settings tells you which mode is active).
     SUPABASE_JWT_SECRET: str | None = None
 
-    FRONTEND_ORIGIN: str = "http://localhost:3000"
+    # Comma-separated so the same deployed backend can serve both a local
+    # dev frontend and a deployed one (e.g. Vercel) at the same time.
+    FRONTEND_ORIGINS: str = "http://localhost:3000"
+
+    @property
+    def frontend_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.FRONTEND_ORIGINS.split(",") if origin.strip()]
 
     # Web Push (VAPID). No fake placeholder for the private key on purpose —
     # code checks `if settings.VAPID_PRIVATE_KEY:` before ever calling
