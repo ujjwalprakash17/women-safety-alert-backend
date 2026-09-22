@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -52,3 +53,21 @@ async def subscribe(
     row = (await db.execute(stmt)).one()
     await db.commit()
     return PushSubscribeResponse(id=str(row.id), endpoint=row.endpoint)
+
+
+@router.delete("/subscribe", status_code=status.HTTP_204_NO_CONTENT)
+async def unsubscribe(
+    endpoint: str = Query(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    # Scoped to the current user's own rows — silently succeeds even if the
+    # endpoint doesn't match anything of theirs (already-unsubscribed is not
+    # an error worth surfacing).
+    await db.execute(
+        delete(PushSubscription).where(
+            PushSubscription.endpoint == endpoint,
+            PushSubscription.user_id == current_user.id,
+        )
+    )
+    await db.commit()

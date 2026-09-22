@@ -22,7 +22,8 @@ async def update_me(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    if not body.accept_consent:
+    first_time = current_user.consent_accepted_at is None
+    if first_time and not body.accept_consent:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
             "You must accept the terms to continue.",
@@ -31,7 +32,10 @@ async def update_me(
     current_user.display_name = body.display_name
     if body.phone_number:
         current_user.phone_number = body.phone_number
-    current_user.consent_accepted_at = datetime.now(UTC)
+    if body.default_radius_km is not None:
+        current_user.default_radius_km = body.default_radius_km
+    if first_time:
+        current_user.consent_accepted_at = datetime.now(UTC)
 
     await db.commit()
     await db.refresh(current_user)

@@ -47,7 +47,10 @@ async def _get_session_row(db: AsyncSession, session_id: uuid.UUID):
             SosSession,
             func.ST_Y(cast(SosSession.location, _GEOMETRY_POINT)).label("lat"),
             func.ST_X(cast(SosSession.location, _GEOMETRY_POINT)).label("lng"),
+            User.display_name,
+            User.phone_number,
         )
+        .join(User, User.id == SosSession.user_id)
         .where(SosSession.id == session_id)
         # expire_on_commit=False means an already identity-mapped instance
         # won't otherwise pick up attributes written by the just-committed flush.
@@ -56,7 +59,13 @@ async def _get_session_row(db: AsyncSession, session_id: uuid.UUID):
     return (await db.execute(stmt)).one_or_none()
 
 
-def _to_read(session: SosSession, lat: float, lng: float) -> SosSessionRead:
+def _to_read(
+    session: SosSession,
+    lat: float,
+    lng: float,
+    display_name: str | None,
+    phone_number: str | None,
+) -> SosSessionRead:
     return SosSessionRead(
         id=session.id,
         user_id=session.user_id,
@@ -64,6 +73,11 @@ def _to_read(session: SosSession, lat: float, lng: float) -> SosSessionRead:
         outcome=session.outcome,
         lat=lat,
         lng=lng,
+        # Shown to whoever is watching this session (any authenticated user
+        # currently — no responder/KYC tier exists yet) so they know who
+        # they're responding to and can reach them directly.
+        display_name=display_name,
+        phone_number=phone_number,
         created_at=session.created_at,
         updated_at=session.updated_at,
         resolved_at=session.resolved_at,
@@ -231,16 +245,22 @@ async def nearby_sos_sessions(
             SosSession,
             func.ST_Y(cast(SosSession.location, _GEOMETRY_POINT)).label("lat"),
             func.ST_X(cast(SosSession.location, _GEOMETRY_POINT)).label("lng"),
+            User.display_name,
+            User.phone_number,
             distance,
         )
+        .join(User, User.id == SosSession.user_id)
         .where(SosSession.status == "active")
         .where(func.ST_DWithin(SosSession.location, origin, radius_km * 1000))
         .order_by(distance)
     )
     rows = (await db.execute(stmt)).all()
     return [
-        NearbySosSession(**_to_read(session, lat_, lng_).model_dump(), distance_meters=dist)
-        for session, lat_, lng_, dist in rows
+        NearbySosSession(
+            **_to_read(session, lat_, lng_, display_name, phone_number).model_dump(),
+            distance_meters=dist,
+        )
+        for session, lat_, lng_, display_name, phone_number, dist in rows
     ]
 
 

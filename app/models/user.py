@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String, func
+from sqlalchemy import Boolean, DateTime, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,6 +28,8 @@ class User(Base):
     consent_accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Persisted preference for the /nearby search ceiling (see nearby/page.tsx).
+    default_radius_km: Mapped[int] = mapped_column(Integer, nullable=False, server_default="5")
     # Anti-misuse: set automatically after repeated false-alarm outcomes
     # (see resolve_sos in routers/sos.py). No admin tooling exists to
     # unban — that's done by flipping this directly in Supabase's Table
