@@ -32,6 +32,8 @@ async def update_me(
     current_user.display_name = body.display_name
     if body.phone_number:
         current_user.phone_number = body.phone_number
+    if body.avatar_url:
+        current_user.avatar_url = body.avatar_url
     if body.default_radius_km is not None:
         current_user.default_radius_km = body.default_radius_km
     if first_time:

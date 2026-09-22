@@ -49,6 +49,7 @@ async def _get_session_row(db: AsyncSession, session_id: uuid.UUID):
             func.ST_X(cast(SosSession.location, _GEOMETRY_POINT)).label("lng"),
             User.display_name,
             User.phone_number,
+            User.avatar_url,
         )
         .join(User, User.id == SosSession.user_id)
         .where(SosSession.id == session_id)
@@ -65,6 +66,7 @@ def _to_read(
     lng: float,
     display_name: str | None,
     phone_number: str | None,
+    avatar_url: str | None,
 ) -> SosSessionRead:
     return SosSessionRead(
         id=session.id,
@@ -78,6 +80,7 @@ def _to_read(
         # they're responding to and can reach them directly.
         display_name=display_name,
         phone_number=phone_number,
+        avatar_url=avatar_url,
         created_at=session.created_at,
         updated_at=session.updated_at,
         resolved_at=session.resolved_at,
@@ -271,6 +274,7 @@ async def nearby_sos_sessions(
             func.ST_X(cast(SosSession.location, _GEOMETRY_POINT)).label("lng"),
             User.display_name,
             User.phone_number,
+            User.avatar_url,
             distance,
         )
         .join(User, User.id == SosSession.user_id)
@@ -281,10 +285,10 @@ async def nearby_sos_sessions(
     rows = (await db.execute(stmt)).all()
     return [
         NearbySosSession(
-            **_to_read(session, lat_, lng_, display_name, phone_number).model_dump(),
+            **_to_read(session, lat_, lng_, display_name, phone_number, avatar_url).model_dump(),
             distance_meters=dist,
         )
-        for session, lat_, lng_, display_name, phone_number, dist in rows
+        for session, lat_, lng_, display_name, phone_number, avatar_url, dist in rows
     ]
 
 

@@ -30,6 +30,7 @@ class SosSessionRead(BaseModel):
     lng: float
     display_name: str | None
     phone_number: str | None
+    avatar_url: str | None
     created_at: datetime
     updated_at: datetime
     resolved_at: datetime | None

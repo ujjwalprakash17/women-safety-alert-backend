@@ -25,6 +25,10 @@ class User(Base):
     # Null until onboarding is completed — the frontend gates every
     # authenticated page on both of these being set (see useAuthedUser).
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Public URL of a Supabase Storage object (bucket "avatars", path scoped
+    # to this user's own supabase_user_id) — uploaded directly from the
+    # browser via the Supabase client, not through this API.
+    avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
     consent_accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
