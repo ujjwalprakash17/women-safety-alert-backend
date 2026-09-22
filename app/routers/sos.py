@@ -87,10 +87,17 @@ def _to_read(
 async def _get_active_session_for_user(
     db: AsyncSession, user_id: uuid.UUID
 ) -> SosSession | None:
+    # .first() rather than scalar_one_or_none(): accounts created before the
+    # duplicate-session guard was added could already have more than one row
+    # marked "active" in the database, which would otherwise raise
+    # MultipleResultsFound here. Most-recent-first so a stale leftover never
+    # shadows a genuinely new trigger.
     result = await db.execute(
-        select(SosSession).where(SosSession.user_id == user_id, SosSession.status == "active")
+        select(SosSession)
+        .where(SosSession.user_id == user_id, SosSession.status == "active")
+        .order_by(SosSession.created_at.desc())
     )
-    return result.scalar_one_or_none()
+    return result.scalars().first()
 
 
 async def _get_owned_active_session(
