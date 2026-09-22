@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from geoalchemy2 import Geometry
-from sqlalchemy import cast, func, select
+from sqlalchemy import cast, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -100,7 +100,7 @@ async def _get_active_session_for_user(
     return result.scalars().first()
 
 
-async def _get_owned_active_session(
+async def _get_owned_session(
     db: AsyncSession, session_id: uuid.UUID, current_user: User
 ) -> SosSession:
     result = await db.execute(select(SosSession).where(SosSession.id == session_id))
@@ -109,8 +109,6 @@ async def _get_owned_active_session(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "SOS session not found")
     if session.user_id != current_user.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Not the owner of this SOS session")
-    if session.status != "active":
-        raise HTTPException(status.HTTP_409_CONFLICT, "SOS session is not active")
     return session
 
 
@@ -195,9 +193,22 @@ async def update_sos_location(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SosSessionRead:
-    session = await _get_owned_active_session(db, session_id, current_user)
-    session.location = _point(body.lat, body.lng)
+    await _get_owned_session(db, session_id, current_user)
+
+    # Single conditional UPDATE instead of a separate read-then-write: two
+    # overlapping requests for the same session (a double-tap, a retried
+    # request) can no longer both pass a status check and then race to write
+    # — whichever commits first "wins" the active row, and the other gets a
+    # clean 409 from rowcount==0 instead of piling up behind a row lock.
+    exec_result = await db.execute(
+        update(SosSession)
+        .where(SosSession.id == session_id, SosSession.status == "active")
+        .values(location=_point(body.lat, body.lng))
+    )
     await db.commit()
+    if exec_result.rowcount == 0:
+        raise HTTPException(status.HTTP_409_CONFLICT, "SOS session is not active")
+
     row = await _get_session_row(db, session_id)
     result = _to_read(*row)
     await sos_ws_manager.broadcast(
@@ -214,11 +225,17 @@ async def resolve_sos(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SosSessionRead:
-    session = await _get_owned_active_session(db, session_id, current_user)
-    session.status = "resolved"
-    session.outcome = body.outcome
-    session.resolved_at = datetime.now(UTC)
+    await _get_owned_session(db, session_id, current_user)
+
+    resolved_at = datetime.now(UTC)
+    exec_result = await db.execute(
+        update(SosSession)
+        .where(SosSession.id == session_id, SosSession.status == "active")
+        .values(status="resolved", outcome=body.outcome, resolved_at=resolved_at)
+    )
     await db.commit()
+    if exec_result.rowcount == 0:
+        raise HTTPException(status.HTTP_409_CONFLICT, "SOS session is not active")
 
     if body.outcome == "false_alarm":
         await _maybe_auto_ban(db, current_user)

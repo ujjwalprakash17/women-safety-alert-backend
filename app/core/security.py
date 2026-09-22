@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 import jwt
 from fastapi import Depends, HTTPException, Query, WebSocket, WebSocketException, status
@@ -69,14 +70,23 @@ async def _authenticate_supabase_token(token: str, db: AsyncSession) -> User:
     )
     user = result.scalar_one_or_none()
     if user is None:
+        # Set every field explicitly rather than leaning on the columns'
+        # server_defaults + a post-commit db.refresh(): this runs on a brand
+        # new user's very first request, and a refresh's extra round-trip
+        # occasionally raced Supabase's pooler badly enough to raise
+        # "Could not refresh instance" — which would have failed that first
+        # request outright. Matches the values the server_defaults would
+        # have produced, so nothing observable changes.
         user = User(
             supabase_user_id=supabase_user_id,
             phone_number=phone_number,
             email=email,
+            default_radius_km=5,
+            is_banned=False,
+            created_at=datetime.now(UTC),
         )
         db.add(user)
         await db.commit()
-        await db.refresh(user)
 
     return user
 

@@ -37,6 +37,11 @@ async def update_me(
     if first_time:
         current_user.consent_accepted_at = datetime.now(UTC)
 
+    # No db.refresh() needed: expire_on_commit=False (see db/session.py) means
+    # current_user keeps every attribute we just set in Python above, and
+    # nothing here is DB-generated — a refresh would just be an extra
+    # round-trip that occasionally races Supabase's pooler badly enough to
+    # raise "Could not refresh instance" (see contacts.py's add_contact for
+    # the same fix applied to a case that actually hit this in testing).
     await db.commit()
-    await db.refresh(current_user)
     return current_user

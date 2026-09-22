@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func, select
@@ -52,10 +53,16 @@ async def add_contact(
         name=body.name,
         phone_number=body.phone_number,
         relationship_label=body.relationship_label,
+        # Set explicitly rather than relying on the column's server_default +
+        # a post-commit db.refresh(): a refresh is a second round-trip that
+        # occasionally raced Supabase's pooler badly enough to raise
+        # "Could not refresh instance" (row not visible yet to the refresh
+        # query's connection) — avoidable entirely since we don't need
+        # anything else the database would generate for us here.
+        created_at=datetime.now(UTC),
     )
     db.add(contact)
     await db.commit()
-    await db.refresh(contact)
     return contact
 
 
