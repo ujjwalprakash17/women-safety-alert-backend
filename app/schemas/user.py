@@ -13,6 +13,8 @@ class UserRead(BaseModel):
     email: str | None
     display_name: str | None
     consent_accepted_at: datetime | None
+    is_banned: bool
+    ban_reason: str | None
     created_at: datetime
 
 

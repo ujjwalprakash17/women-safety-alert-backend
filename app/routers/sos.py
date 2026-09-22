@@ -27,6 +27,11 @@ router = APIRouter(prefix="/sos", tags=["sos"])
 
 _GEOMETRY_POINT = Geometry(geometry_type="POINT", srid=4326)
 
+# Anti-misuse: after this many sessions resolved as "false_alarm" (not
+# "test", which is an expected/allowed outcome), the account auto-suspends.
+FALSE_ALARM_BAN_THRESHOLD = 3
+SUPPORT_EMAIL = "ujjwalprakash144@gmail.com"
+
 
 def _point(lat: float, lng: float):
     # Explicit cast to the *same* Geography type as the column. Geometry ->
@@ -88,6 +93,28 @@ async def _get_owned_active_session(
     return session
 
 
+async def _maybe_auto_ban(db: AsyncSession, user: User) -> None:
+    """Suspend the account once it crosses FALSE_ALARM_BAN_THRESHOLD
+    false-alarm outcomes. "test" outcomes never count toward this — they're
+    an expected, allowed way to try the feature."""
+    if user.is_banned:
+        return
+
+    count = (
+        await db.execute(
+            select(func.count())
+            .select_from(SosSession)
+            .where(SosSession.user_id == user.id, SosSession.outcome == "false_alarm")
+        )
+    ).scalar_one()
+
+    if count >= FALSE_ALARM_BAN_THRESHOLD:
+        user.is_banned = True
+        user.banned_at = datetime.now(UTC)
+        user.ban_reason = f"Automatically suspended after {count} false alerts."
+        await db.commit()
+
+
 @router.post("", response_model=SosSessionRead, status_code=status.HTTP_201_CREATED)
 async def trigger_sos(
     body: SosTriggerRequest,
@@ -95,6 +122,13 @@ async def trigger_sos(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SosSessionRead:
+    if current_user.is_banned:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"Your account is suspended for repeated false alerts. "
+            f"To appeal, contact {SUPPORT_EMAIL}.",
+        )
+
     # Guard against duplicate concurrent sessions (double-click, multiple
     # tabs, a network retry) — nothing else stopped a user from ending up
     # with two "active" sessions, which would show as duplicate entries on
@@ -164,6 +198,10 @@ async def resolve_sos(
     session.outcome = body.outcome
     session.resolved_at = datetime.now(UTC)
     await db.commit()
+
+    if body.outcome == "false_alarm":
+        await _maybe_auto_ban(db, current_user)
+
     row = await _get_session_row(db, session_id)
     result = _to_read(*row)
     await sos_ws_manager.broadcast(
